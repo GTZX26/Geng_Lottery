@@ -1,6 +1,7 @@
 # Geng_Lottery
-Thai lottery 3-digit top number analysis program
-โปรแกรมคำนวนหวยไทย 3 ตัวท้าย
+Thai lottery 3-digit top number analysis program  
+
+# โปรแกรมคำนวนหวยไทย 3 ตัวท้าย
 วิธีใช้  
 
 1. ในโหมด ป้อนเอง ให้ใส่เลขอะไรก็ได้ 3 ตัวขึ้นไปที่คิดว่าน่าจะมาในงวดนี้เช่น 123456  
