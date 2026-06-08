@@ -11,6 +11,10 @@ Thai lottery 3-digit top number analysis program
 โปรแกรมจะดึงสถิติหวย 20 งวดล่าสุดมาคำนวนด้วยระบบ Ai แล้วรายงานผลออกมา  
 ให้ซื้อตามนั้น  
 
+Download  
+https://github.com/GTZX26/Geng_Lottery/releases/download/Geng_Lottery/geng_lottery
+
+
   
 <img width="560" height="632" alt="Screenshot from 2026-06-09 04-00-17" src="https://github.com/user-attachments/assets/4b66b9e2-9bca-4172-90cf-e0d968ef00b3" />
 
