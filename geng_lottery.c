@@ -1,497 +1,433 @@
-/*
- * geng_lottery.c
- * Geng-Lottery Analyzer
- * แอปพลิเคชัน GUI วิเคราะห์หวย 3 ตัวบน ใช้ GTK+3 และ libcurl
- * เขียนทั้งหมดในไฟล์เดียวตามข้อกำหนด
- */
-
 #include <gtk/gtk.h>
-#include <curl/curl.h>
-#include <string.h>
-#include <stdlib.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <ctype.h>
-#include <time.h>
+#include <stdbool.h>
+#include <curl/curl.h>
 
-/* ============================================================
- * โครงสร้างและตัวแปรกลาง (Global State)
- * ============================================================ */
-// วิดเจ็ต GUI (เปลี่ยน status_label เป็น GtkLabel* เพื่อแก้ warning)
-GtkLabel *status_label;          // ใช้ GtkLabel* โดยตรง
-GtkWidget *entry_manual;
-GtkWidget *spin_button;
-GtkWidget *radio_manual, *radio_auto;
-GtkWidget *text_view;
-GtkTextBuffer *text_buffer;
-GtkWidget *profit_label;         // ใช้ GtkWidget* แต่ใช้ GTK_LABEL() ตอนเรียกฟังก์ชัน
+// สำหรับแก้ไข Json เมื่อผลหวยออกมาใหม่
+// https://gist.github.com/GTZX26/b702b338ff722881acd93e21b1a04d5e
 
-// ข้อมูลสถิติหวย 20 งวดล่าสุด
-char last20[20][4];             // เก็บเป็นสตริง 3 หลัก
-int have_data = 0;              // 1 = โหลดข้อมูลสำเร็จ
-int data_mode = 0;              // 0=online, 1=offline, 2=backup
+// สำหรับที่อยู่ไฟล์ Joson เอาตรงนี้ไปใส่ใน URL ของโค้ด
+#define URL_DB_PAHT "https://gist.github.com/GTZX26/b702b338ff722881acd93e21b1a04d5e/raw"
+// กำหนดที่อยู่พาธสำหรับเซฟฐานข้อมูลหวยในเครื่องของพี่เก่ง
+#define LOCAL_DB_PATH "lottery_stats.json"
 
-// ผลการคำนวณล่าสุด
-char *selected_digits = NULL;   // สตริงเลขเดี่ยวที่ใช้ (เช่น "012")
-int total_sets = 0;             // จำนวนชุดเลข 3 ตัว
-double investment = 0;          // เงินลงทุน (บาท)
-double profit = 0;              // กำไรสุทธิ
-int calc_done = 0;              // 1 = เคยกดวิเคราะห์แล้ว
-GString *permutation_str = NULL; // ข้อความชุดเลขเรียงสวย ใช้ทำรายงาน
+typedef struct {
+    int digit;
+    int count;
+} DigitFreq;
 
-/* ============================================================
- * ฟังก์ชันช่วย (Helpers)
- * ============================================================ */
+GtkWidget *radio_manual;
+GtkWidget *radio_auto;
+GtkWidget *entry_manual_digits;
+GtkWidget *spin_auto_count;
+GtkWidget *text_view_result;
+GtkWidget *label_summary;
+GtkWidget *window;
 
-// แสดงไดอะล็อกข้อความ
-void show_message_dialog(GtkWindow *parent, const char *msg, GtkMessageType type) {
-    GtkWidget *dialog = gtk_message_dialog_new(parent,
-                            GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
-                            type, GTK_BUTTONS_OK, "%s", msg);
-    gtk_dialog_run(GTK_DIALOG(dialog));
-    gtk_widget_destroy(dialog);
-}
-
-// สกัดเลขโดดเดี่ยวจากข้อความที่ผู้ใช้ป้อน (เอาเฉพาะ 0-9, ตัดซ้ำ, เรียงลำดับ)
-gchar* extract_unique_digits(const char *input) {
-    int seen[10] = {0};
-    const char *p = input;
-    while (*p) {
-        if (isdigit((unsigned char)*p))
-            seen[*p - '0'] = 1;
-        p++;
-    }
-    GString *digits = g_string_new(NULL);
-    for (int d = 0; d < 10; d++)
-        if (seen[d])
-            g_string_append_printf(digits, "%d", d);
-    if (digits->len == 0) {
-        g_string_free(digits, TRUE);
-        return NULL;
-    }
-    return g_string_free(digits, FALSE); // โอนกรรมสิทธิ์สตริง
-}
-
-// หาเลขที่ออก "น้อยที่สุด" จาก 20 งวด (นับความถี่ทุกตำแหน่ง)
-void compute_rare_digits(int count, char *digits_out) {
-    int freq[10] = {0};
-    for (int i = 0; i < 20; i++) {
-        for (int j = 0; j < 3; j++) {
-            int d = last20[i][j] - '0';
-            freq[d]++;
-        }
-    }
-    // สร้างอาร์เรย์ 0-9 แล้วเรียงตามความถี่น้อยไปมาก (ถ้าเท่ากันเรียงตามค่าเลข)
-    int digits[10];
-    for (int i = 0; i < 10; i++) digits[i] = i;
-    for (int i = 0; i < 9; i++) {
-        for (int j = i + 1; j < 10; j++) {
-            if (freq[digits[i]] > freq[digits[j]] ||
-                (freq[digits[i]] == freq[digits[j]] && digits[i] > digits[j])) {
-                int tmp = digits[i];
-                digits[i] = digits[j];
-                digits[j] = tmp;
-            }
-        }
-    }
-    for (int i = 0; i < count; i++)
-        digits_out[i] = '0' + digits[i];
-    digits_out[count] = '\0';
-}
-
-/* ============================================================
- * การดาวน์โหลดและพาร์ส JSON (libcurl)
- * ============================================================ */
-
-// โครงสร้างเก็บข้อมูลดาวน์โหลดในหน่วยความจำ
-struct MemoryStruct {
-    char *memory;
-    size_t size;
+char historical_draws[20][4] = {
+    "000", "000", "000", "000", "000",
+    "000", "000", "000", "000", "000",
+    "000", "000", "000", "000", "000",
+    "000", "000", "000", "000", "000"
 };
 
-// callback ของ libcurl สำหรับเขียนข้อมูล
-static size_t write_memory_callback(void *contents, size_t size, size_t nmemb, void *userp) {
+size_t write_callback(void *ptr, size_t size, size_t nmemb, void *stream) {
     size_t realsize = size * nmemb;
-    struct MemoryStruct *mem = (struct MemoryStruct *)userp;
-    char *ptr = realloc(mem->memory, mem->size + realsize + 1);
-    if (!ptr) return 0; // หน่วยความจำไม่พอ
-    mem->memory = ptr;
-    memcpy(&(mem->memory[mem->size]), contents, realsize);
-    mem->size += realsize;
-    mem->memory[mem->size] = 0;
+    GString *response = (GString *)stream;
+    g_string_append_len(response, (const gchar *)ptr, realsize);
     return realsize;
 }
 
-// พาร์สสตริง JSON (อาร์เรย์ของสตริง 3 หลัก) เอาเฉพาะ 20 ตัวล่าสุด
-void parse_json_string(const char *json, char out[][4], int *count) {
-    char tokens[200][4]; // เก็บชั่วคราวสูงสุด 200 ชุด
-    int total = 0;
-    const char *p = json;
-    while (*p) {
-        p = strchr(p, '"');
-        if (!p) break;
-        p++; // ข้ามเครื่องหมายคำพูดเปิด
-        if (isdigit((unsigned char)p[0]) && isdigit((unsigned char)p[1]) && isdigit((unsigned char)p[2]) && p[3] == '"') {
-            if (total < 200) {
-                strncpy(tokens[total], p, 3);
-                tokens[total][3] = '\0';
-                total++;
-            }
-            p += 4; // ข้ามเลข 3 ตัว + เครื่องหมายคำพูดปิด
-        } else {
-            p++;
+bool parse_lottery_json(const char *json_string) {
+    int count = 0;
+    const char *ptr = json_string;
+
+    while ((ptr = strchr(ptr, '"')) != NULL && count < 20) {
+        ptr++;
+        if (isdigit(ptr[0]) && isdigit(ptr[1]) && isdigit(ptr[2]) && ptr[3] == '"') {
+            strncpy(historical_draws[count], ptr, 3);
+            historical_draws[count][3] = '\0';
+            count++;
+            ptr += 4;
         }
     }
-    int copy_count = (total >= 20) ? 20 : total;
-    int start = total - copy_count;
-    for (int i = 0; i < copy_count; i++)
-        strcpy(out[i], tokens[start + i]);
-    *count = copy_count;
+    return (count >= 20);
 }
 
-// ดำเนินการโหลดข้อมูลเมื่อเริ่มโปรแกรม (Online → Offline → System Backup)
-void download_and_process() {
+bool read_local_database() {
+    FILE *file = fopen(LOCAL_DB_PATH, "r");
+    if (!file) return false;
+
+    fseek(file, 0, SEEK_END);
+    long length = ftell(file);
+    fseek(file, 0, SEEK_SET);
+
+    char *buffer = malloc(length + 1);
+    if (buffer) {
+        size_t read_size = fread(buffer, 1, length, file);
+        buffer[read_size] = '\0';
+        fclose(file);
+
+        bool success = parse_lottery_json(buffer);
+        free(buffer);
+        return success;
+    }
+    fclose(file);
+    return false;
+}
+
+bool fetch_and_save_live_data() {
     CURL *curl;
     CURLcode res;
-    struct MemoryStruct chunk = {NULL, 0};
-    chunk.memory = malloc(1);
-    chunk.size = 0;
-    int online_success = 0;
+    bool success = false;
 
+    curl_global_init(CURL_GLOBAL_DEFAULT);
     curl = curl_easy_init();
-    if (curl) {
-        curl_easy_setopt(curl, CURLOPT_URL,
-            "https://gist.githubusercontent.com/GTZX26/b702b338ff722881acd93e21b1a04d5e/raw/lottery_stats.json");
+
+    if(curl) {
+        GString *chunk = g_string_new("");
+
+        curl_easy_setopt(curl, CURLOPT_URL, URL_DB_PAHT);
         curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)chunk);
         curl_easy_setopt(curl, CURLOPT_TIMEOUT, 6L);
-        curl_easy_setopt(curl, CURLOPT_USERAGENT, "GengLotteryAnalyzer/1.0");
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
-        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_memory_callback);
-        curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
+        curl_easy_setopt(curl, CURLOPT_USERAGENT, "Mozilla/5.0 (Linux Mint Cinnamon) GengLotteryAnalyzer/1.3");
 
         res = curl_easy_perform(curl);
-        if (res == CURLE_OK) {
-            long http_code = 0;
-            curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
-            if (http_code == 200) {
-                int cnt;
-                parse_json_string(chunk.memory, last20, &cnt);
-                if (cnt >= 20) {
-                    have_data = 1;
-                    data_mode = 0; // online
-                    g_file_set_contents("lottery_stats.json", chunk.memory, -1, NULL);
-                    online_success = 1;
+
+        if(res == CURLE_OK) {
+            long response_code;
+            curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+
+            if (response_code == 200) {
+                success = parse_lottery_json(chunk->str);
+                if (success) {
+                    FILE *file = fopen(LOCAL_DB_PATH, "w");
+                    if (file) {
+                        fprintf(file, "%s", chunk->str);
+                        fclose(file);
+                    }
                 }
             }
         }
+
+        g_string_free(chunk, TRUE);
         curl_easy_cleanup(curl);
     }
-    free(chunk.memory); // คืนหน่วยความจำของ buffer ดาวน์โหลด
+    curl_global_cleanup();
+    return success;
+}
 
-    if (!online_success) {
-        // ลองอ่านจากไฟล์ในเครื่อง
-        gchar *file_content = NULL;
-        if (g_file_get_contents("lottery_stats.json", &file_content, NULL, NULL)) {
-            int cnt;
-            parse_json_string(file_content, last20, &cnt);
-            g_free(file_content);
-            if (cnt >= 20) {
-                have_data = 1;
-                data_mode = 1; // offline
-                return;
+int compare_freq(const void *a, const void *b) {
+    return ((DigitFreq*)a)->count - ((DigitFreq*)b)->count;
+}
+
+void analyze_least_frequent(int count, char *output_digits) {
+    DigitFreq frequencies[10];
+    for(int i = 0; i < 10; i++) {
+        frequencies[i].digit = i;
+        frequencies[i].count = 0;
+    }
+    for(int i = 0; i < 20; i++) {
+        for(int j = 0; j < 3; j++) {
+            int digit = historical_draws[i][j] - '0';
+            if(digit >= 0 && digit <= 9) {
+                frequencies[digit].count++;
             }
         }
-        // ใช้ข้อมูลสำรองฮาร์ดโค้ด
-        const char *backup[20] = {
-            "176","984","186","435","729","851","362","507","943","618",
-            "274","390","165","804","532","697","218","473","925","046"
-        };
-        for (int i = 0; i < 20; i++)
-            strcpy(last20[i], backup[i]);
-        have_data = 1;
-        data_mode = 2; // system backup
+    }
+    qsort(frequencies, 10, sizeof(DigitFreq), compare_freq);
+    for(int i = 0; i < count; i++) {
+        output_digits[i] = frequencies[i].digit + '0';
+    }
+    output_digits[count] = '\0';
+}
 
-        // สร้างไฟล์ lottery_stats.json ใหม่
-        GString *json = g_string_new("[");
-        for (int i = 0; i < 20; i++) {
-            g_string_append_printf(json, "\"%s\"", backup[i]);
-            if (i < 19) g_string_append(json, ",");
+void get_unique_digits(const char *input, char *output) {
+    bool seen[10] = {false};
+    int idx = 0;
+    for (int i = 0; input[i] != '\0'; i++) {
+        if (isdigit(input[i])) {
+            int d = input[i] - '0';
+            if (!seen[d]) {
+                seen[d] = true;
+                output[idx++] = input[i];
+            }
         }
-        g_string_append(json, "]");
-        g_file_set_contents("lottery_stats.json", json->str, -1, NULL);
-        g_string_free(json, TRUE);
     }
+    output[idx] = '\0';
 }
 
-/* ============================================================
- * Callbacks ของ GUI
- * ============================================================ */
-
-// เมื่อเลือกโหมด Manual
-void on_manual_toggled(GtkToggleButton *btn, gpointer user_data) {
-    if (gtk_toggle_button_get_active(btn)) {
-        gtk_widget_set_sensitive(entry_manual, TRUE);
-        gtk_widget_set_sensitive(spin_button, FALSE);
-    }
-}
-
-// เมื่อเลือกโหมด Auto
-void on_auto_toggled(GtkToggleButton *btn, gpointer user_data) {
-    if (gtk_toggle_button_get_active(btn)) {
-        gtk_widget_set_sensitive(entry_manual, FALSE);
-        gtk_widget_set_sensitive(spin_button, TRUE);
-    }
-}
-
-// ปุ่ม "เริ่มวิเคราะห์"
-void on_analyze_clicked(GtkButton *btn, gpointer user_data) {
-    if (!have_data) {
-        gtk_text_buffer_set_text(text_buffer, "❌ ยังไม่มีข้อมูลสถิติหวย 20 งวด", -1);
-        return;
-    }
-
-    char unique[11] = {0}; // เก็บเลขเดี่ยวที่ใช้ (สูงสุด 10 ตัว)
-    int digit_count = 0;
-
-    if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(radio_manual))) {
-        // โหมดป้อนเอง
-        const char *input = gtk_entry_get_text(GTK_ENTRY(entry_manual));
-        char *res = extract_unique_digits(input);
-        if (res) {
-            strcpy(unique, res);
-            digit_count = strlen(unique);
-            g_free(res);
-        } else {
-            digit_count = 0;
-        }
+void on_calculate_clicked(GtkWidget *widget, gpointer data) {
+    char digits[11] = "";
+    if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(radio_auto))) {
+        int count = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(spin_auto_count));
+        analyze_least_frequent(count, digits);
+        gtk_entry_set_text(GTK_ENTRY(entry_manual_digits), digits);
     } else {
-        // โหมดอัตโนมัติ
-        int count = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(spin_button));
-        compute_rare_digits(count, unique);
-        digit_count = count;
+        const char *raw_input = gtk_entry_get_text(GTK_ENTRY(entry_manual_digits));
+        get_unique_digits(raw_input, digits);
+        gtk_entry_set_text(GTK_ENTRY(entry_manual_digits), digits);
     }
 
-    if (digit_count < 3) {
-        gtk_text_buffer_set_text(text_buffer, "❌ ต้องมีเลขอย่างน้อย 3 ตัวขึ้นไปในการคำนวณ", -1);
+    int n = strlen(digits);
+    GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_view_result));
+
+    if (n < 3) {
+        gtk_text_buffer_set_text(buffer, "❌ กรุณาระบุตัวเลขที่ไม่ซ้ำกันอย่างน้อย 3 ตัวขึ้นไปนะคะ!", -1);
+        gtk_label_set_text(GTK_LABEL(label_summary), "รอการระบุตัวเลข...");
         return;
     }
 
-    // เก็บเลขเดี่ยวสำหรับรายงาน
-    if (selected_digits) g_free(selected_digits);
-    selected_digits = g_strdup(unique);
+    GString *result_str = g_string_new("");
+    int total_combinations = 0;
+    char temp[16];
 
-    // สร้าง Permutation เลข 3 ตัว ไม่ซ้ำตำแหน่ง
-    GString *result = g_string_new("");
-    int n = digit_count;
-    int line_count = 0;
-    total_sets = 0;
     for (int i = 0; i < n; i++) {
         for (int j = 0; j < n; j++) {
-            if (i == j) continue;
             for (int k = 0; k < n; k++) {
-                if (j == k || i == k) continue;
-                char set_str[4];
-                set_str[0] = unique[i];
-                set_str[1] = unique[j];
-                set_str[2] = unique[k];
-                set_str[3] = '\0';
-                g_string_append(result, set_str);
-                total_sets++;
-                line_count++;
-                if (line_count % 10 == 0)
-                    g_string_append(result, "\n");
-                else
-                    g_string_append(result, " ");
+                if (i != j && i != k && j != k) {
+                    snprintf(temp, sizeof(temp), "%c%c%c   ", digits[i], digits[j], digits[k]);
+                    g_string_append(result_str, temp);
+                    total_combinations++;
+                    if (total_combinations % 10 == 0) {
+                        g_string_append(result_str, "\n");
+                    }
+                }
             }
         }
     }
 
-    gtk_text_buffer_set_text(text_buffer, result->str, -1);
+    gtk_text_buffer_set_text(buffer, result_str->str, -1);
+    g_string_free(result_str, TRUE);
 
-    // เก็บสำหรับรายงาน
-    if (permutation_str) g_string_free(permutation_str, TRUE);
-    permutation_str = result; // โอนกรรมสิทธิ์
+    int cost = total_combinations * 1;
+    int payout = 900;
+    int profit = payout - cost;
 
-    // คำนวณเงินลงทุน กำไร
-    investment = total_sets * 1.0;
-    profit = 900.0 - investment;
-    char profit_text[256];
-    snprintf(profit_text, sizeof(profit_text),
-             "💵 จำนวนชุด: %d ชุด | เงินลงทุน: %.0f บาท | เงินรางวัล: 900 บาท | กำไรสุทธิ: %.0f บาท",
-             total_sets, investment, profit);
-    gtk_label_set_text(GTK_LABEL(profit_label), profit_text);
-    calc_done = 1;
+    char summary_report[512];
+    snprintf(summary_report, sizeof(summary_report),
+             "✨ นำเลข [%s] จำนวน %d ตัวมาจัดเรียง\n"
+             "📊 ได้เลข 3 ตัวบนทั้งหมด: %d ชุด\n"
+             "💰 ลงทุนชุดละ 1 บาท รวมเป็นเงิน: %d บาท\n"
+             "🏆 เงินรางวัลที่จะได้รับ (บาทละ 900): %d บาท\n"
+             "📈 ผลกำไรสุทธิที่จะได้รับ: %d บาท!",
+             digits, n, total_combinations, cost, payout, profit);
+
+    gtk_label_set_text(GTK_LABEL(label_summary), summary_report);
 }
 
-// ปุ่ม "ออกรายงาน"
-void on_report_clicked(GtkButton *btn, gpointer user_data) {
-    if (!calc_done) {
-        show_message_dialog(GTK_WINDOW(gtk_widget_get_toplevel(GTK_WIDGET(btn))),
-                            "❌ ยังไม่มีการคำนวณผลลัพธ์\nกรุณากด 'เริ่มวิเคราะห์' ก่อน",
-                            GTK_MESSAGE_WARNING);
+void on_report_clicked(GtkWidget *widget, gpointer data) {
+    GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_view_result));
+    GtkTextIter start, end;
+    gtk_text_buffer_get_bounds(buffer, &start, &end);
+    char *combinations = gtk_text_buffer_get_text(buffer, &start, &end, FALSE);
+    const char *summary = gtk_label_get_text(GTK_LABEL(label_summary));
+
+    if (strlen(combinations) == 0 || g_str_has_prefix(summary, "รอการประมวลผล")) {
+        GtkWidget *error_dialog = gtk_message_dialog_new(GTK_WINDOW(window),
+                                                         GTK_DIALOG_DESTROY_WITH_PARENT,
+                                                         GTK_MESSAGE_WARNING,
+                                                         GTK_BUTTONS_OK,
+                                                         "⚠️ ไม่พบข้อมูลผลลัพธ์! กรุณากดปุ่มวิเคราะห์เลขก่อนส่งออกรายงานนะคะ");
+        gtk_dialog_run(GTK_DIALOG(error_dialog));
+        gtk_widget_destroy(error_dialog);
+        g_free(combinations);
         return;
     }
 
-    // สร้างเนื้อหารายงาน
-    GString *report = g_string_new(NULL);
-    g_string_append(report, "========================================\n");
-    g_string_append(report, "   Geng-Lottery Analyzer - รายงานผล\n");
-    g_string_append(report, "========================================\n\n");
+    FILE *file = fopen("geng_lottery_report.txt", "w");
 
-    time_t t = time(NULL);
-    struct tm *tm_info = localtime(&t);
-    char datetime[64];
-    strftime(datetime, sizeof(datetime), "%d/%m/%Y %H:%M:%S", tm_info);
-    g_string_append_printf(report, "วันที่/เวลา: %s\n\n", datetime);
+    if (file != NULL) {
+        fprintf(file, "==================================================\n");
+        fprintf(file, "      รายงานผลการวิเคราะห์ระบบ Geng-Lottery\n");
+        fprintf(file, "==================================================\n\n");
+        fprintf(file, "%s\n\n", summary);
+        fprintf(file, "--------------------------------------------------\n");
+        fprintf(file, "รายชื่อชุดตัวเลขย้อนหลัง 20 งวดจริงที่ระบบใช้คำนวณ:\n");
+        fprintf(file, "--------------------------------------------------\n");
+        for(int i = 0; i < 20; i++) {
+            fprintf(file, "งวดที่ %d: %s\n", i+1, historical_draws[i]);
+        }
+        fprintf(file, "\n--------------------------------------------------\n");
+        fprintf(file, "รายชื่อชุดตัวเลขทั้งหมดที่จัดเรียงเรียบร้อยแล้ว:\n");
+        fprintf(file, "--------------------------------------------------\n");
+        fprintf(file, "%s\n", combinations);
+        
+        // ✨ [เพิ่มจุดที่ 2] กล่องข้อความสนับสนุนค่าน้ำชาท้ายไฟล์รายงาน Text
+        fprintf(file, "==================================================\n");
+        fprintf(file, "💖 หากท่านชอบโปรแกรมนี้และอยากช่วยอุดหนุน สามารถโอนบริจาคได้ที่:\n");
+        fprintf(file, "   ธ.กสิกรณ์ไทย (K-bank)\n");
+        fprintf(file, "   เลขที่บัญชี : 1192455177\n");
+        fprintf(file, "   ชื่อบัญชี : นาย ธรรมสรณ์ มุสิกพันธ์\n");
+        fprintf(file, "🙏 ขอบพระคุณทุกการสนับสนุนและทุกน้ำใจมากๆ ค่ะ\n");
+        fprintf(file, "==================================================\n");
+        
+        fclose(file);
 
-    g_string_append_printf(report, "สรุปผลกำไร:\n");
-    g_string_append_printf(report, "  - จำนวนชุดเลข 3 ตัว: %d ชุด\n", total_sets);
-    g_string_append_printf(report, "  - เงินลงทุน: %.0f บาท (ชุดละ 1 บาท)\n", investment);
-    g_string_append_printf(report, "  - เงินรางวัลคงที่: 900 บาท\n");
-    g_string_append_printf(report, "  - กำไรสุทธิ: %.0f บาท\n\n", profit);
-
-    g_string_append(report, "เลขย้อนหลัง 20 งวดล่าสุดที่ใช้คำนวณ:\n");
-    for (int i = 0; i < 20; i++) {
-        g_string_append_printf(report, "  %s", last20[i]);
-        if ((i + 1) % 5 == 0)
-            g_string_append(report, "\n");
-        else
-            g_string_append(report, " ");
+        GtkWidget *success_dialog = gtk_message_dialog_new(GTK_WINDOW(window),
+                                                           GTK_DIALOG_DESTROY_WITH_PARENT,
+                                                           GTK_MESSAGE_INFO,
+                                                           GTK_BUTTONS_OK,
+                                                           "💾 ส่งออกรายงานเรียบร้อยแล้ว\n\nไฟล์บันทึกชื่อ geng_lottery_report.txt");
+        gtk_dialog_run(GTK_DIALOG(success_dialog));
+        gtk_widget_destroy(success_dialog);
     }
-    g_string_append(report, "\n\n");
-
-    g_string_append_printf(report, "เลขที่นำมาเรียง (หลัก): %s\n\n", selected_digits);
-    g_string_append(report, "รายการชุดเลข 3 ตัวทั้งหมด:\n");
-    g_string_append(report, permutation_str->str);
-    g_string_append(report, "\n");
-
-    // เขียนไฟล์
-    const char *filename = "geng_lottery_report.txt";
-    GError *error = NULL;
-    if (!g_file_set_contents(filename, report->str, -1, &error)) {
-        show_message_dialog(GTK_WINDOW(gtk_widget_get_toplevel(GTK_WIDGET(btn))),
-                            "❌ ไม่สามารถบันทึกไฟล์รายงานได้", GTK_MESSAGE_ERROR);
-    } else {
-        char *cwd = g_get_current_dir();
-        char *fullpath = g_build_filename(cwd, filename, NULL);
-        char msg[512];
-        snprintf(msg, sizeof(msg), "✅ บันทึกไฟล์รายงานเรียบร้อยแล้วที่:\n%s", fullpath);
-        show_message_dialog(GTK_WINDOW(gtk_widget_get_toplevel(GTK_WIDGET(btn))),
-                            msg, GTK_MESSAGE_INFO);
-        g_free(cwd);
-        g_free(fullpath);
-    }
-    g_string_free(report, TRUE);
+    g_free(combinations);
 }
 
-/* ============================================================
- * สร้างอินเทอร์เฟซ GUI
- * ============================================================ */
-void build_ui() {
-    GtkWidget *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-    gtk_window_set_title(GTK_WINDOW(window), "Geng-Lottery Analyzer");
-    gtk_window_set_default_size(GTK_WINDOW(window), 550, 680);
-    gtk_container_set_border_width(GTK_CONTAINER(window), 15);
-
-    // ตั้งไอคอนหน้าต่าง
-    GError *err = NULL;
-    GdkPixbuf *icon = gdk_pixbuf_new_from_file("/home/geng/Desktop/Geng Project/icon-lottery.png", &err);
-    if (icon) {
-        gtk_window_set_icon(GTK_WINDOW(window), icon);
-        g_object_unref(icon);
+void on_mode_changed(GtkWidget *widget, gpointer data) {
+    if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(radio_auto))) {
+        gtk_widget_set_sensitive(entry_manual_digits, FALSE);
+        gtk_widget_set_sensitive(spin_auto_count, TRUE);
     } else {
-        g_warning("ไม่สามารถโหลดไอคอน: %s", err->message);
-        g_clear_error(&err);
+        gtk_widget_set_sensitive(entry_manual_digits, TRUE);
+        gtk_widget_set_sensitive(spin_auto_count, FALSE);
     }
-
-    g_signal_connect(window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
-
-    GtkWidget *main_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
-    gtk_container_add(GTK_CONTAINER(window), main_vbox);
-
-    // ----- ป้ายสถานะเครือข่าย -----
-    // ใช้ GtkLabel* โดยตรง สร้างจาก gtk_label_new แล้ว cast เก็บใน status_label
-    status_label = GTK_LABEL(gtk_label_new(NULL));  // เก็บเป็น GtkLabel*
-    if (data_mode == 0)
-        gtk_label_set_markup(status_label, "<span foreground='green'>🟢 Online: อัปเดตสถิติล่าสุดจากเว็บ และบันทึกไฟล์ลงเครื่องสำเร็จ</span>");
-    else if (data_mode == 1)
-        gtk_label_set_markup(status_label, "<span foreground='orange'>🟡 Offline Mode: อ่านข้อมูลสถิติจากไฟล์ในเครื่องคอมพิวเตอร์เรียบร้อย</span>");
-    else
-        gtk_label_set_markup(status_label, "<span foreground='red'>🔴 System Backup: ไม่สามารถติดต่อเว็บ/ไฟล์ในเครื่องได้ (ใช้ฐานข้อมูลสำรอง)</span>");
-    gtk_box_pack_start(GTK_BOX(main_vbox), GTK_WIDGET(status_label), FALSE, FALSE, 0);
-
-    // ----- Frame เลือกวิธีการทำงาน -----
-    GtkWidget *frame1 = gtk_frame_new("เลือกวิธีการทำงาน");
-    gtk_box_pack_start(GTK_BOX(main_vbox), frame1, FALSE, FALSE, 0);
-    GtkWidget *frame1_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
-    gtk_container_add(GTK_CONTAINER(frame1), frame1_vbox);
-
-    radio_manual = gtk_radio_button_new_with_label(NULL, "โหมดป้อนเอง (Manual)");
-    radio_auto = gtk_radio_button_new_with_label_from_widget(GTK_RADIO_BUTTON(radio_manual), "โหมดอัตโนมัติ (Auto)");
-    entry_manual = gtk_entry_new();
-    spin_button = gtk_spin_button_new_with_range(3, 10, 1);
-    gtk_spin_button_set_value(GTK_SPIN_BUTTON(spin_button), 3);
-
-    gtk_box_pack_start(GTK_BOX(frame1_vbox), radio_manual, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(frame1_vbox), entry_manual, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(frame1_vbox), radio_auto, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(frame1_vbox), spin_button, FALSE, FALSE, 0);
-
-    // ตั้งค่าเริ่มต้น: Manual
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(radio_manual), TRUE);
-    gtk_widget_set_sensitive(entry_manual, TRUE);
-    gtk_widget_set_sensitive(spin_button, FALSE);
-
-    g_signal_connect(radio_manual, "toggled", G_CALLBACK(on_manual_toggled), NULL);
-    g_signal_connect(radio_auto, "toggled", G_CALLBACK(on_auto_toggled), NULL);
-
-    // ----- ปุ่มควบคุม -----
-    GtkWidget *hbox_btns = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
-    gtk_box_pack_start(GTK_BOX(main_vbox), hbox_btns, FALSE, FALSE, 0);
-    GtkWidget *btn_analyze = gtk_button_new_with_label("🚀 เริ่มวิเคราะห์แปรผลเลข 3 ตัวบน");
-    GtkWidget *btn_report = gtk_button_new_with_label("📋 ออกรายงาน (Report Text)");
-    gtk_box_pack_start(GTK_BOX(hbox_btns), btn_analyze, TRUE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(hbox_btns), btn_report, TRUE, TRUE, 0);
-    g_signal_connect(btn_analyze, "clicked", G_CALLBACK(on_analyze_clicked), NULL);
-    g_signal_connect(btn_report, "clicked", G_CALLBACK(on_report_clicked), NULL);
-
-    // ----- Frame รายการชุดตัวเลข -----
-    GtkWidget *frame2 = gtk_frame_new("รายการชุดตัวเลขที่ระบบวิเคราะห์ได้");
-    gtk_box_pack_start(GTK_BOX(main_vbox), frame2, TRUE, TRUE, 0);
-    GtkWidget *scrolled = gtk_scrolled_window_new(NULL, NULL);
-    gtk_container_add(GTK_CONTAINER(frame2), scrolled);
-    text_view = gtk_text_view_new();
-    gtk_text_view_set_editable(GTK_TEXT_VIEW(text_view), FALSE);
-    gtk_container_add(GTK_CONTAINER(scrolled), text_view);
-    text_buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_view));
-
-    // ----- Frame วิเคราะห์เงิน -----
-    GtkWidget *frame3 = gtk_frame_new("แผงวิเคราะห์สัดส่วนการลงทุนและการทำกำไร");
-    gtk_box_pack_start(GTK_BOX(main_vbox), frame3, FALSE, FALSE, 0);
-    profit_label = gtk_label_new("ยังไม่ได้คำนวณ");  // เก็บเป็น GtkWidget*
-    gtk_container_add(GTK_CONTAINER(frame3), profit_label);
-
-    gtk_widget_show_all(window);
 }
 
-/* ============================================================
- * ฟังก์ชัน main
- * ============================================================ */
 int main(int argc, char *argv[]) {
     gtk_init(&argc, &argv);
-    curl_global_init(CURL_GLOBAL_ALL);
 
-    // โหลดข้อมูลสถิติ (Online / Offline / Backup)
-    download_and_process();
+    int status_mode = 0;
 
-    // สร้าง GUI หลังจากข้อมูลพร้อม
-    build_ui();
+    if (fetch_and_save_live_data()) {
+        status_mode = 0;
+    } else if (read_local_database()) {
+        status_mode = 1;
+    } else {
+        status_mode = 2;
+        const char* backup[20] = {"176","984","186","362","962","713","603","478","343","443","507","318","108","931","609","019","605","903","043","603"};
+        for(int i=0; i<20; i++) strcpy(historical_draws[i], backup[i]);
 
+        FILE *file = fopen(LOCAL_DB_PATH, "w");
+        if (file) {
+            fprintf(file, "[\n");
+            for(int i = 0; i < 20; i++) {
+                fprintf(file, "  \"%s\"%s\n", backup[i], (i == 19) ? "" : ",");
+            }
+            fprintf(file, "]\n");
+            fclose(file);
+        }
+    }
+
+    window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    gtk_window_set_title(GTK_WINDOW(window), "Geng-Lottery Analyzer v1.3 (Hybrid DB)");
+    // 📐 ขยายขนาดความสูงจาก 680 เป็น 760 เพื่อเปิดพื้นที่ให้กล่องรับบริจาคด้านล่างอย่างพอดีค่ะ
+    gtk_window_set_default_size(GTK_WINDOW(window), 550, 760);
+    gtk_container_set_border_width(GTK_CONTAINER(window), 15);
+    g_signal_connect(window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
+
+    GError *error = NULL;
+    gtk_window_set_icon_from_file(GTK_WINDOW(window), "/home/geng/Desktop/Geng Project/icon-lottery.png", &error);
+    if (error != NULL) {
+        g_error_free(error);
+    }
+
+    GtkWidget *main_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    gtk_container_add(GTK_CONTAINER(window), main_box);
+
+    GtkWidget *lbl_net = gtk_label_new(NULL);
+    if (status_mode == 0) {
+        gtk_label_set_markup(GTK_LABEL(lbl_net), "<span foreground='#22c55e'>🟢 Online: อัปเดตสถิติล่าสุดจากเว็บ และบันทึกไฟล์ลงเครื่องสำเร็จ</span>");
+    } else if (status_mode == 1) {
+        gtk_label_set_markup(GTK_LABEL(lbl_net), "<span foreground='#f59e0b'>🟡 Offline Mode: อ่านข้อมูลสถิติจากไฟล์ในเครื่องคอมพิวเตอร์เรียบร้อย</span>");
+    } else {
+        gtk_label_set_markup(GTK_LABEL(lbl_net), "<span foreground='#ef4444'>🔴 System Backup: ไม่สามารถติดต่อเว็บ/ไฟล์ในเครื่องได้ (ใช้ฐานข้อมูลสำรอง)</span>");
+    }
+    gtk_box_pack_start(GTK_BOX(main_box), lbl_net, FALSE, FALSE, 0);
+
+    GtkWidget *frame_mode = gtk_frame_new(" 🔮 เลือกวิธีการทำงาน ");
+    gtk_box_pack_start(GTK_BOX(main_box), frame_mode, FALSE, FALSE, 0);
+
+    GtkWidget *box_mode = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_container_set_border_width(GTK_CONTAINER(box_mode), 10);
+    gtk_container_add(GTK_CONTAINER(frame_mode), box_mode);
+
+    GtkWidget *box_manual = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+    radio_manual = gtk_radio_button_new_with_label(NULL, "ป้อนตัวเลขที่ชอบด้วยตนเอง:");
+    entry_manual_digits = gtk_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(entry_manual_digits), "เช่น 024578");
+    gtk_box_pack_start(GTK_BOX(box_manual), radio_manual, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box_manual), entry_manual_digits, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(box_mode), box_manual, FALSE, FALSE, 0);
+
+    GtkWidget *box_auto = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+    radio_auto = gtk_radio_button_new_with_label_from_widget(GTK_RADIO_BUTTON(radio_manual), "ดึงเลขจากสถิติที่มาน้อยที่สุด 20 งวดล่าสุด:");
+
+    GtkAdjustment *adj = gtk_adjustment_new(6.0, 3.0, 10.0, 1.0, 1.0, 0.0);
+    spin_auto_count = gtk_spin_button_new(adj, 1.0, 0);
+
+    gtk_box_pack_start(GTK_BOX(box_auto), radio_auto, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box_auto), spin_auto_count, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box_mode), box_auto, FALSE, FALSE, 0);
+
+    gtk_widget_set_sensitive(spin_auto_count, FALSE);
+
+    g_signal_connect(radio_manual, "toggled", G_CALLBACK(on_mode_changed), NULL);
+    g_signal_connect(radio_auto, "toggled", G_CALLBACK(on_mode_changed), NULL);
+
+    GtkWidget *box_actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+    gtk_box_pack_start(GTK_BOX(main_box), box_actions, FALSE, FALSE, 5);
+
+    GtkWidget *btn_calculate = gtk_button_new_with_label("🚀 เริ่มวิเคราะห์แปรผลเลข 3 ตัวบน");
+    gtk_box_pack_start(GTK_BOX(box_actions), btn_calculate, TRUE, TRUE, 0);
+    g_signal_connect(btn_calculate, "clicked", G_CALLBACK(on_calculate_clicked), NULL);
+
+    GtkWidget *btn_report = gtk_button_new_with_label("📋 ออกรายงาน (Report Text)");
+    gtk_box_pack_start(GTK_BOX(box_actions), btn_report, TRUE, TRUE, 0);
+    g_signal_connect(btn_report, "clicked", G_CALLBACK(on_report_clicked), NULL);
+
+    GtkWidget *frame_result = gtk_frame_new(" 📋 รายการชุดตัวเลขที่ระบบวิเคราะห์ได้ ");
+    gtk_box_pack_start(GTK_BOX(main_box), frame_result, TRUE, TRUE, 0);
+
+    GtkWidget *scroll_window = gtk_scrolled_window_new(NULL, NULL);
+    gtk_container_add(GTK_CONTAINER(frame_result), scroll_window);
+
+    text_view_result = gtk_text_view_new();
+    gtk_text_view_set_editable(GTK_TEXT_VIEW(text_view_result), FALSE);
+    gtk_text_view_set_left_margin(GTK_TEXT_VIEW(text_view_result), 10);
+    gtk_text_view_set_right_margin(GTK_TEXT_VIEW(text_view_result), 10);
+    gtk_container_add(GTK_CONTAINER(scroll_window), text_view_result);
+
+    GtkWidget *frame_summary = gtk_frame_new(" 💡 แผงวิเคราะห์สัดส่วนการลงทุนและการทำกำไร ");
+    gtk_box_pack_start(GTK_BOX(main_box), frame_summary, FALSE, FALSE, 5);
+
+    label_summary = gtk_label_new("รอการประมวลผลคำนวณสูตรหวย...");
+    gtk_label_set_justify(GTK_LABEL(label_summary), GTK_JUSTIFY_LEFT);
+
+    gtk_widget_set_margin_start(label_summary, 12);
+    gtk_widget_set_margin_end(label_summary, 12);
+    gtk_widget_set_margin_top(label_summary, 12);
+    gtk_widget_set_margin_bottom(label_summary, 12);
+
+    gtk_container_add(GTK_CONTAINER(frame_summary), label_summary);
+
+    // ✨ [เพิ่มจุดที่ 1] สร้างกรอบกล่องรับบริจาคโชว์บนตัวโปรแกรม GUI ด้านล่างสุด
+    GtkWidget *frame_donate = gtk_frame_new(" 💖 สนับสนุนค่าน้ำชานักพัฒนา (Donation) ");
+    gtk_box_pack_start(GTK_BOX(main_box), frame_donate, FALSE, FALSE, 5);
+
+    GtkWidget *lbl_donate = gtk_label_new(NULL);
+    gtk_label_set_markup(GTK_LABEL(lbl_donate),
+                         "<b>หากท่านชอบโปรแกรมนี้และอยากช่วยอุดหนุนสามารถโอนบริจาคได้ที่</b>\n"
+                         "🏦 <b>ธ.กสิกรณ์ไทย (K-bank)</b>\n"
+                         "🆔 <b>เลขที่บัญชี :</b> 1192455177\n"
+                         "👤 <b>ชื่อบัญชี :</b> นาย ธรรมสรณ์ มุสิกพันธ์");
+    gtk_label_set_justify(GTK_LABEL(lbl_donate), GTK_JUSTIFY_CENTER);
+    gtk_widget_set_margin_start(lbl_donate, 10);
+    gtk_widget_set_margin_end(lbl_donate, 10);
+    gtk_widget_set_margin_top(lbl_donate, 10);
+    gtk_widget_set_margin_bottom(lbl_donate, 10);
+    gtk_container_add(GTK_CONTAINER(frame_donate), lbl_donate);
+
+    gtk_widget_show_all(window);
     gtk_main();
 
-    // คืนทรัพยากร
-    if (selected_digits) g_free(selected_digits);
-    if (permutation_str) g_string_free(permutation_str, TRUE);
-    curl_global_cleanup();
     return 0;
 }
