@@ -10,8 +10,10 @@ Thai lottery 3-digit top number analysis program
 https://github.com/GTZX26/Geng_Lottery/releases/download/Geng_Lottery/geng_lottery  
   
 # วิธีใช้  
-เมื่อดาวน์โหลดมาแล้ว ให้คลิ๊กขวาที่โปรแกรม "geng_lottery" เลือก คุณสมบัติ -> สิทธิ์->  
-ติ๊กเครื่องหมายถูกที่ "อนุญาติให้เลือกแฟ้มทำงานเป็นโปรแกรม" ตามรูปนี้  
+เมื่อดาวน์โหลดมาแล้ว ให้คลิ๊กขวาที่โปรแกรม  
+"geng_lottery" เลือก คุณสมบัติ -> สิทธิ์  
+ติ๊กเครื่องหมายถูกที่ ☑️ "อนุญาติให้เลือกแฟ้มทำงานเป็นโปรแกรม"  
+ตามรูปนี้  
   
 <img width="1366" height="768" alt="Screenshot from 2026-06-09 05-54-26" src="https://github.com/user-attachments/assets/3a1d4a71-78a9-4018-884c-34313f5ae522" />  
   
