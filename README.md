@@ -6,7 +6,7 @@ Thai lottery 3-digit top number analysis program
 # โปรแกรมคำนวนหวยไทย 3 ตัวบน  
 (ใช้บน ลีนุ๊กซ์ เท่านั้น)  
   
-# Download :  
+  ### ⬇️ Download Click ⬇️  
   [![ดาวน์โหลดที่นี่](https://img.shields.io/badge/Download-Releases-orange?style=for-the-badge&logo=github)](https://github.com/GTZX26/Geng_Lottery/releases/download/Geng_Lottery/geng_lottery)  
   
 # วิธีใช้  
