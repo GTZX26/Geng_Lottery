@@ -1,8 +1,10 @@
-# Geng_Lottery (Run on Linux)  
+# Geng_Lottery  
+  
+(Run on Linux)  
 Thai lottery 3-digit top number analysis program  
   
 # โปรแกรมคำนวนหวยไทย 3 ตัวบน  
-  (ใช้บน ลีนุ๊กซ์ เท่านั้น)  
+(ใช้บน ลีนุ๊กซ์ เท่านั้น)  
   
 # Download :  
 https://github.com/GTZX26/Geng_Lottery/releases/download/Geng_Lottery/geng_lottery  
