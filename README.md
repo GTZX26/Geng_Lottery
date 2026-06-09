@@ -1,7 +1,8 @@
 # Geng_Lottery (Run on Linux)  
 Thai lottery 3-digit top number analysis program  
   
-# โปรแกรมคำนวนหวยไทย 3 ตัวบน (ใช้บน ลีนุ๊กซ์ เท่านั้น)  
+# โปรแกรมคำนวนหวยไทย 3 ตัวบน  
+  (ใช้บน ลีนุ๊กซ์ เท่านั้น)  
   
 # Download :  
 https://github.com/GTZX26/Geng_Lottery/releases/download/Geng_Lottery/geng_lottery  
@@ -12,7 +13,7 @@ https://github.com/GTZX26/Geng_Lottery/releases/download/Geng_Lottery/geng_lotte
   
 <img width="1366" height="768" alt="Screenshot from 2026-06-09 05-54-26" src="https://github.com/user-attachments/assets/3a1d4a71-78a9-4018-884c-34313f5ae522" />  
   
-# ___________________________  
+# _____________________  
   
 จากนั้นเปิดโปรแกรมโดยการ ดับเบิ๊ลคลิ๊กไฟล์ "geng_lottery"  
 1. ในโหมด ป้อนเอง ให้ใส่เลขอะไรก็ได้ 3 ตัวขึ้นไปที่คิดว่าน่าจะมาในงวดนี้เช่น 123456  
@@ -29,10 +30,12 @@ https://github.com/GTZX26/Geng_Lottery/releases/download/Geng_Lottery/geng_lotte
   
 <img width="662" height="722" alt="Screenshot from 2026-06-09 04-02-55" src="https://github.com/user-attachments/assets/b21ebc3f-e719-4e44-b2ae-7bbe366efb60" />  
   
-# ___________________________  
+# _____________________  
   
 หากคุณชื่นชอบโปรแกรมนี้แล้วอยากสนับสนุนผม สามารถโอนเงินบริจาค อุดหนุนได้ที่  
-## กสิกรไทย (K-Bank) : 1192455177  
+# กสิกรไทย (K-Bank)  
+# เลขบัญชี : 1192455177  
 # นาย ธรรมสรณ์ มุสิกพันธ์  
+  
 
   
